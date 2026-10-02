@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Google 广告投放网站分析平台</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📊</text></svg>">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">📊</span>
+      <div>
+        <h1>Google 广告投放网站分析平台</h1>
+        <p class="sub">持续采集广告透明度中心 · 自动分类 · AI 深度分析 · 第三方数据富化</p>
+      </div>
+    </div>
+    <a class="source-link" href="https://adstransparency.google.com/?region=anywhere" target="_blank" rel="noopener">数据源：Google Ads Transparency Center ↗</a>
+  </header>
+
+  <main class="container">
+    <!-- 统计卡 -->
+    <section class="stats" id="stats">
+      <div class="stat-card">
+        <div class="stat-num" id="st-total">–</div>
+        <div class="stat-label">已收录网站</div>
+        <div class="progress"><div class="progress-bar" id="st-progress"></div></div>
+        <div class="stat-hint" id="st-target"></div>
+      </div>
+      <div class="stat-card"><div class="stat-num" id="st-crawled">–</div><div class="stat-label">已抓取分析</div></div>
+      <div class="stat-card"><div class="stat-num" id="st-advertisers">–</div><div class="stat-label">广告主</div></div>
+      <div class="stat-card"><div class="stat-num" id="st-adsense">–</div><div class="stat-label">挂 AdSense 代码</div></div>
+    </section>
+
+    <!-- 搜索与筛选 -->
+    <section class="controls">
+      <div class="search-row">
+        <input id="q" type="search" placeholder="搜索域名 / 标题 / 简介，如 casino、temu、游戏…">
+        <select id="sort">
+          <option value="recent">最新发现</option>
+          <option value="oldest">最早发现</option>
+          <option value="rank">全球排名优先</option>
+          <option value="name">域名 A-Z</option>
+        </select>
+        <label class="chk"><input type="checkbox" id="adsense"> 只看挂 AdSense 的</label>
+        <label class="chk"><input type="checkbox" id="hasAds"> 只看有广告记录的</label>
+        <button id="exportBtn" class="ghost" title="导出当前筛选结果为 CSV">导出 CSV</button>
+      </div>
+      <div class="chips" id="chips"></div>
+    </section>
+
+    <!-- 列表 -->
+    <section class="list-wrap">
+      <table class="list" id="table">
+        <thead>
+          <tr><th>网站</th><th>分类</th><th>简介（AI）</th><th>广告</th><th>排名</th><th>发现时间</th></tr>
+        </thead>
+        <tbody id="tbody"><tr><td colspan="6" class="loading">加载中…</td></tr></tbody>
+      </table>
+      <div class="pager" id="pager"></div>
+    </section>
+
+    <footer class="foot">
+      数据来源：Google Ads Transparency Center（逆向 RPC）· RDAP · Wayback Machine · CrUX · Cloudflare Radar · Workers AI
+      <br>本平台仅收录公开广告库中的信息，用于市场研究。
+    </footer>
+  </main>
+
+  <!-- 详情抽屉 -->
+  <div class="drawer-mask" id="drawerMask"></div>
+  <aside class="drawer" id="drawer">
+    <button class="drawer-close" id="drawerClose">✕</button>
+    <div id="drawerBody" class="drawer-body"></div>
+  </aside>
+
+  <script src="/app.js"></script>
+</body>
+</html>

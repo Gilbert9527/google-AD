@@ -1,0 +1,54 @@
+{
+  // Cloudflare 部署配置
+  // database_id 首次执行 `wrangler d1 create google-ad` 后回填
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "google-ad-platform",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-09-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "observability": {
+    "enabled": true
+  },
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "google-ad",
+      "database_id": "90db2093-bc3a-4b61-a046-678d4972fa33"
+    }
+  ],
+  "ai": {
+    "binding": "AI"
+  },
+  "triggers": {
+    "crons": [
+      "*/10 * * * *",
+      "*/5 * * * *",
+      "*/30 * * * *",
+      "0 1 * * *"
+    ]
+  },
+  "vars": {
+    // ===== 可调参数（免费版保守值，Workers Paid 可大幅调高，见 README）=====
+    "TARGET_SITES": "60000",
+    // 每 10 分钟一轮：透明度中心关键词搜索页数
+    "BATCH_SOURCE_PAGES": "20",
+    // 每 5 分钟一轮：抓取站点数
+    "BATCH_CRAWL_SITES": "20",
+    // 每 30 分钟一轮：第三方数据富化站点数
+    "BATCH_ENRICH_SITES": "12",
+    // 每天 01:00：Workers AI 深度分析站点数
+    "BATCH_AI_SITES": "150",
+    // Workers AI 每日调用上限（免费额度保护）
+    "AI_DAILY_LIMIT": "300"
+  }
+  // secrets（用 `wrangler secret put` 设置，不要写进本文件）:
+  //   ADMIN_TOKEN     - 管理接口鉴权
+  //   GOOGLE_API_KEY  - 可选：CrUX + PageSpeed（免费，Google Cloud Console 创建）
+  //   RADAR_TOKEN     - 可选：Cloudflare Radar 域名排名（免费，Cloudflare 账号 Token）
+  //   SIMILARWEB_API_KEY / SPYFU_API_KEY / SEMRUSH_API_KEY - 可选付费平台
+}
