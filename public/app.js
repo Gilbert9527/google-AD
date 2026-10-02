@@ -8,7 +8,7 @@
     const d = new Date(ts);
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   };
-  const esc = (s) => (s || '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
   // ---------- 统计 ----------
   async function loadStats() {
@@ -125,6 +125,14 @@
       body.innerHTML = '<p style="color:var(--red);">' + esc(d.error) + '</p>';
       return;
     }
+    try {
+      renderDetail(body, d);
+    } catch (e) {
+      body.innerHTML = '<p style="color:var(--red);">渲染失败: ' + esc(String(e && e.stack ? e.stack : e)) + '</p>';
+    }
+  }
+
+  function renderDetail(body, d) {
     const data = d.data || {};
     const rdap = data.rdap || {};
     const wayback = data.wayback || {};
