@@ -35,16 +35,18 @@ async function loadSeeds(): Promise<string[] | null> {
 
 export async function importSeedChunk(env: { DB: D1Database; SEEDS?: KVNamespace }, count: number): Promise<number> {
   let all: string[] | null = null;
-  // 优先 KV（若可用），否则走 GitHub raw
-  try {
-    const listRaw = env.SEEDS ? await env.SEEDS.get('seeds_top250k') : null;
-    if (listRaw) all = listRaw.split('\n');
-  } catch {
-    /* KV 不可用时走 raw */
-  }
-  if (!all || !all.length) all = await loadSeeds();
+  // 仓库 raw 优先（含 rank/ref_ips 权重列）；KV 仅作兜底（可能是旧格式）
+  all = await loadSeeds();
   if (!all || !all.length) {
-    await debugNote(env.DB, 'seed sources unavailable (KV null, raw fetch failed)');
+    try {
+      const listRaw = env.SEEDS ? await env.SEEDS.get('seeds_top250k') : null;
+      if (listRaw) all = listRaw.split('\n');
+    } catch {
+      /* ignore */
+    }
+  }
+  if (!all || !all.length) {
+    await debugNote(env.DB, 'seed sources unavailable (raw fetch failed, KV null)');
     return 0;
   }
 
