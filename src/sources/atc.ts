@@ -60,14 +60,27 @@ export async function fetchContentJsDomain(
   }
 }
 
-/** 从创意内容片段中提取 content.js 预览脚本 URL */
+/**
+ * 从创意内容片段中提取 content.js 预览脚本 URL。
+ * 注意：URL 参数里含逗号（uiFeatures=12,54）等，需匹配到引号/反斜杠/空白为止。
+ */
 export function extractContentJsUrl(contentSnippet: string | null): string | null {
   if (!contentSnippet) return null;
-  // 注意：URL 参数里含逗号（uiFeatures=12,54）等，需匹配到引号/反斜杠/空白为止
   const m = contentSnippet.match(
     /https:\/\/displayads-formats\.googleusercontent\.com\/ads\/preview\/content\.js\?[^"'\\\s]+/
   );
   return m ? m[0] : null;
+}
+
+/**
+ * 过滤“空广告”：assets 载荷过小的创意没有真实内容，
+ * content.js 会渲染通用广告壳（默认演示广告），提取出来的是假域名。
+ * 真实广告的 assets（gzip base64）通常 > 100 字符。
+ */
+export function hasSubstantiveAssets(contentJsUrl: string): boolean {
+  const m = contentJsUrl.match(/assets=([^&]+)/);
+  if (!m) return false;
+  return m[1].length >= 60;
 }
 
 export function normalizeDomainInput(input: string): string {

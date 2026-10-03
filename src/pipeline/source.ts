@@ -17,8 +17,12 @@ import {
   getCreativeLandingDomain,
   normalizeDomainInput,
 } from '../sources/atc';
-import { buildKeywordSeeds, deriveKeywordsFromDomains } from '../seed/keywords';
-import { fetchContentJsDomain, extractContentJsUrl } from '../sources/atc';
+import { buildKeywordSeeds } from '../seed/keywords';
+import {
+  fetchContentJsDomain,
+  extractContentJsUrl,
+  hasSubstantiveAssets,
+} from '../sources/atc';
 
 /** 每个广告主最多取几个创意的 content.js 预览来提取落地域名（Workers Paid 可调大） */
 const CONTENTJS_PER_ADV = 3;
@@ -198,13 +202,13 @@ export async function runSourceBatch(env: Env, _maxPages?: number): Promise<Sour
   }
 
   // ---- B. 广告主创意（拿落地域名）----
-  const advBudget = 3;
+  const advBudget = 4;
   const advRows = await db
     .prepare(
       `SELECT a.advertiser_id, a.domain FROM advertisers a
        LEFT JOIN sites s ON s.domain = a.domain
        WHERE a.done = 0 AND (a.domain IS NULL OR s.domain IS NULL)
-       ORDER BY a.found_at DESC LIMIT ?`
+       ORDER BY RANDOM() LIMIT ?`
     )
     .bind(advBudget)
     .all<{ advertiser_id: string; domain: string | null }>();
@@ -234,7 +238,7 @@ export async function runSourceBatch(env: Env, _maxPages?: number): Promise<Sour
         for (const c of page.creatives) {
           if (domains.size >= 2) break;
           const jsUrl = extractContentJsUrl(c.contentSnippet);
-          if (!jsUrl) continue;
+          if (!jsUrl || !hasSubstantiveAssets(jsUrl)) continue;
           report.contentJsAttempts++;
           const dom = await fetchContentJsDomain(jsUrl);
           if (dom) {
@@ -288,26 +292,36 @@ export async function runSourceBatch(env: Env, _maxPages?: number): Promise<Sour
   try {
     const mined = await db
       .prepare(
-        `SELECT creative_id, advertiser_id, raw FROM creatives
-         WHERE domain IS NULL AND raw LIKE '%displayads-formats%'
-           AND (advertiser_id IS NULL OR advertiser_id NOT IN
+        `SELECT c.creative_id AS creative_id, c.advertiser_id AS advertiser_id, c.raw AS raw
+         FROM creatives c LEFT JOIN advertisers a ON a.advertiser_id = c.advertiser_id
+         WHERE c.domain IS NULL AND c.raw LIKE '%displayads-formats%'
+           AND (c.advertiser_id IS NULL OR c.advertiser_id NOT IN
                 (SELECT DISTINCT advertiser_id FROM creatives WHERE domain IS NOT NULL))
-         ORDER BY RANDOM() LIMIT 3`
+           AND (a.name IS NULL OR a.name = '' OR a.name NOT IN
+                (SELECT DISTINCT a2.name FROM advertisers a2
+                 JOIN creatives c2 ON c2.advertiser_id = a2.advertiser_id
+                 WHERE c2.domain IS NOT NULL AND a2.name IS NOT NULL AND a2.name != ''))
+         ORDER BY RANDOM() LIMIT 15`
       )
       .all<{ creative_id: string; advertiser_id: string | null; raw: string }>();
+    const newDomains = new Set<string>();
     for (const row of mined.results || []) {
       const jsUrl = extractContentJsUrl(row.raw);
-      if (!jsUrl) continue;
+      if (!jsUrl || !hasSubstantiveAssets(jsUrl)) continue;
       const dom = await fetchContentJsDomain(jsUrl);
       if (!dom) continue;
       report.contentJsAttempts++;
-      report.contentJsHits++;
+      // 即使域名已知也回填创意链接（丰富站点详情的广告记录）
       await db
         .prepare('UPDATE creatives SET domain = ? WHERE creative_id = ? AND advertiser_id IS ?')
         .bind(dom, row.creative_id, row.advertiser_id)
         .run();
+      if (newDomains.has(dom)) continue;
+      newDomains.add(dom);
+      report.contentJsHits++;
       await db.batch([upsertSiteStmt(db, dom, 'atc_creative')]);
       report.domainsDiscovered++;
+      if (newDomains.size >= 3) break;
       await sleep(1200);
     }
   } catch (e) {
@@ -317,11 +331,11 @@ export async function runSourceBatch(env: Env, _maxPages?: number): Promise<Sour
   }
 
   // ---- C. 域名验证（确认有广告 + 广告主关联 + 广告数）----
-  const verBudget = 1;
+  const verBudget = 2;
   const siteRows = await db
     .prepare(
       `SELECT domain FROM sites
-       WHERE source LIKE 'atc%' AND ad_count IS NULL AND status = 'pending'
+       WHERE source LIKE 'atc%' AND ad_count IS NULL AND status IN ('pending','ok')
        ORDER BY first_seen ASC LIMIT ?`
     )
     .bind(verBudget)
@@ -369,26 +383,6 @@ export async function runSourceBatch(env: Env, _maxPages?: number): Promise<Sour
         report.errors.push('verify: ' + msg);
       }
     }
-  }
-
-  // ---- D. 域名反哺关键词（雪球）：拿最新发现的域名派生新关键词 ----
-  try {
-    const recentSites = await db
-      .prepare(
-        `SELECT domain FROM sites WHERE source LIKE 'atc%' ORDER BY first_seen DESC LIMIT 2`
-      )
-      .all<{ domain: string }>();
-    const derived = deriveKeywordsFromDomains(recentSites.results?.map((r) => r.domain) || []);
-    if (derived.length) {
-      await db.batch(
-        derived.map((k) =>
-          db.prepare('INSERT OR IGNORE INTO keywords (keyword) VALUES (?)').bind(k)
-        )
-      );
-      report.domainsDiscovered += 0; // 不重复计数，仅扩充关键词池
-    }
-  } catch {
-    /* 雪球步骤失败不影响主流程 */
   }
 
   return report;
