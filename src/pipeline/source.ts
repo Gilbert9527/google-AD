@@ -338,13 +338,15 @@ export async function runSourceBatch(env: Env, _maxPages?: number): Promise<Sour
     }
   }
 
-  // ---- C. 域名验证（确认有广告 + 广告主关联 + 广告数）----
-  const verBudget = 2;
+  // ---- C. 域名验证（确认有广告 + 广告主关联 + 广告数 + 活跃度评分）----
+  // 覆盖所有来源（种子站也要验证）；优先验证外链权重高的热门站：
+  // 429 配额宝贵，热门站几乎必有活跃广告，每个请求产出最高
+  const verBudget = 3;
   const siteRows = await db
     .prepare(
       `SELECT domain FROM sites
-       WHERE source LIKE 'atc%' AND ad_count IS NULL AND status IN ('pending','ok')
-       ORDER BY first_seen ASC LIMIT ?`
+       WHERE ad_count IS NULL AND status IN ('pending','ok')
+       ORDER BY ref_ips DESC LIMIT ?`
     )
     .bind(verBudget)
     .all<{ domain: string }>();
