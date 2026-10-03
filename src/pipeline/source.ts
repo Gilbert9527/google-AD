@@ -158,6 +158,75 @@ export async function runSourceBatch(env: Env, _maxPages?: number): Promise<Sour
 
   let backoff = false; // 触发 429 后本轮剩余步骤跳过
 
+  // ---- C. 域名验证（最先执行：解封窗口优先填广告数据/活跃度评分）----
+  // 覆盖所有来源（种子站也要验证）；优先验证外链权重高的热门站：
+  // 429 配额宝贵，热门站几乎必有活跃广告，每个请求产出最高
+  const verBudget = 3;
+  const siteRows = await db
+    .prepare(
+      `SELECT domain FROM sites
+       WHERE ad_count IS NULL AND status IN ('pending','ok')
+       ORDER BY ref_ips DESC LIMIT ?`
+    )
+    .bind(verBudget)
+    .all<{ domain: string }>();
+
+  for (const site of siteRows.results || []) {
+    if (backoff) break;
+    try {
+      await sleep(ATC_SPACING_MS);
+      const page = await searchCreativesByDomain(db, site.domain, 20);
+      const adTotal = page.totalCount ? Number(page.totalCount) : page.creatives.length;
+      const rows = page.creatives.map((c) => ({
+        creativeId: c.creativeId,
+        advertiserId: c.advertiserId,
+        domain: site.domain,
+        format: c.formatHint,
+        firstShown: c.firstShown,
+        lastShown: c.lastShown,
+        raw: c.contentSnippet,
+      }));
+      await upsertCreatives(db, rows);
+      report.creativesStored += rows.length;
+      // 广告主关联
+      const advs = page.creatives
+        .filter((c) => c.advertiserId)
+        .map((c) => ({
+          advertiserId: c.advertiserId as string,
+          name: c.advertiserName || '',
+          region: null,
+          domain: site.domain,
+        }));
+      if (advs.length) {
+        await upsertAdvertisers(db, advs);
+        report.advertisersDiscovered += advs.length;
+      }
+      // 广告活跃度评分（基于广告样本）
+      const formats = new Set(
+        page.creatives.map((c) => c.formatHint).filter((f): f is number => typeof f === 'number')
+      );
+      const shownTimes = page.creatives.map((c) => c.lastShown).filter((t): t is number => !!t);
+      const firstTimes = page.creatives.map((c) => c.firstShown).filter((t): t is number => !!t);
+      const adScore = computeAdScore({
+        adCount: adTotal,
+        firstShown: firstTimes.length ? Math.min(...firstTimes) : null,
+        lastShown: shownTimes.length ? Math.max(...shownTimes) : null,
+        formats,
+      });
+      await db
+        .prepare('UPDATE sites SET ad_count = ?, ad_score = ?, last_seen = ? WHERE domain = ?')
+        .bind(adTotal, adScore, now(), site.domain)
+        .run();
+      report.domainVerifies++;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg.includes('backoff') || msg.includes('429')) backoff = true;
+      if (report.errors.length < 6) {
+        report.errors.push('verify: ' + msg);
+      }
+    }
+  }
+
   // ---- A. 关键词建议 ----
   // "online X" 最优先（实测会返回域名建议，如 onlinecasino-*），
   // 其次其它多词查询，最后单核心词（只出广告主名）
@@ -335,75 +404,6 @@ export async function runSourceBatch(env: Env, _maxPages?: number): Promise<Sour
   } catch (e) {
     if (report.errors.length < 6) {
       report.errors.push('mine: ' + (e instanceof Error ? e.message : String(e)));
-    }
-  }
-
-  // ---- C. 域名验证（确认有广告 + 广告主关联 + 广告数 + 活跃度评分）----
-  // 覆盖所有来源（种子站也要验证）；优先验证外链权重高的热门站：
-  // 429 配额宝贵，热门站几乎必有活跃广告，每个请求产出最高
-  const verBudget = 3;
-  const siteRows = await db
-    .prepare(
-      `SELECT domain FROM sites
-       WHERE ad_count IS NULL AND status IN ('pending','ok')
-       ORDER BY ref_ips DESC LIMIT ?`
-    )
-    .bind(verBudget)
-    .all<{ domain: string }>();
-
-  for (const site of siteRows.results || []) {
-    if (backoff) break;
-    try {
-      await sleep(ATC_SPACING_MS);
-      const page = await searchCreativesByDomain(db, site.domain, 20);
-      const adTotal = page.totalCount ? Number(page.totalCount) : page.creatives.length;
-      const rows = page.creatives.map((c) => ({
-        creativeId: c.creativeId,
-        advertiserId: c.advertiserId,
-        domain: site.domain,
-        format: c.formatHint,
-        firstShown: c.firstShown,
-        lastShown: c.lastShown,
-        raw: c.contentSnippet,
-      }));
-      await upsertCreatives(db, rows);
-      report.creativesStored += rows.length;
-      // 广告主关联
-      const advs = page.creatives
-        .filter((c) => c.advertiserId)
-        .map((c) => ({
-          advertiserId: c.advertiserId as string,
-          name: c.advertiserName || '',
-          region: null,
-          domain: site.domain,
-        }));
-      if (advs.length) {
-        await upsertAdvertisers(db, advs);
-        report.advertisersDiscovered += advs.length;
-      }
-      // 广告活跃度评分（基于广告样本）
-      const formats = new Set(
-        page.creatives.map((c) => c.formatHint).filter((f): f is number => typeof f === 'number')
-      );
-      const shownTimes = page.creatives.map((c) => c.lastShown).filter((t): t is number => !!t);
-      const firstTimes = page.creatives.map((c) => c.firstShown).filter((t): t is number => !!t);
-      const adScore = computeAdScore({
-        adCount: adTotal,
-        firstShown: firstTimes.length ? Math.min(...firstTimes) : null,
-        lastShown: shownTimes.length ? Math.max(...shownTimes) : null,
-        formats,
-      });
-      await db
-        .prepare('UPDATE sites SET ad_count = ?, ad_score = ?, last_seen = ? WHERE domain = ?')
-        .bind(adTotal, adScore, now(), site.domain)
-        .run();
-      report.domainVerifies++;
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      if (msg.includes('backoff') || msg.includes('429')) backoff = true;
-      if (report.errors.length < 6) {
-        report.errors.push('verify: ' + msg);
-      }
     }
   }
 
