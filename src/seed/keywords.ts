@@ -49,8 +49,30 @@ const CORE = [
 /** 二级组合词：核心词 + 轻量后缀（命中率仍可） */
 const SUFFIXES = ['online', 'app', 'site', 'shop', 'usa', 'uk', 'india', 'nigeria'];
 
-/** 生成种子关键词列表 */
-export function buildKeywordSeeds(): string[] {
+/**
+ * "online X" 多词系列：实测这类查询会返回【域名建议】（"2" 数组），
+ * 是域名发现的主引擎（单核心词只出广告主名不出域名）。
+ */
+const ONLINE_X = [
+  'online casino', 'online slots', 'online betting', 'online poker', 'online lottery',
+  'online games', 'online shopping', 'online store', 'online pharmacy', 'online dating',
+  'online loans', 'online insurance', 'online degrees', 'online courses', 'online tutoring',
+  'online trading', 'online forex', 'online banking', 'online marketing', 'online hosting',
+  'online vpn', 'online backup', 'online recovery', 'online translation', 'online design',
+  'buy shoes', 'buy watches', 'buy furniture', 'buy supplements', 'buy gadgets',
+  'best casino', 'best slots', 'best betting', 'best insurance', 'best mortgage',
+  'best vpn', 'best hosting', 'best credit cards', 'best forex',
+  'cheap flights', 'cheap hotels', 'cheap insurance', 'cheap loans',
+  'car insurance', 'home insurance', 'life insurance', 'health insurance',
+  'personal loan', 'payday loan', 'business loan', 'student loan',
+  'web hosting', 'cloud hosting', 'game hosting', 'email marketing',
+  'dating site', 'dating app', 'casino site', 'betting site',
+  'real estate', 'commercial real estate', 'rental property',
+  'weight loss', 'skincare products', 'diet pills', 'dental implants',
+  'crypto exchange', 'bitcoin casino', 'forex broker', 'trading platform',
+];
+
+/** 生成种子关键词列表 */export function buildKeywordSeeds(): string[] {
   const out = new Set<string>();
   for (const c of CORE) {
     out.add(c);
@@ -58,6 +80,7 @@ export function buildKeywordSeeds(): string[] {
       out.add(`${c} ${s}`);
     }
   }
+  for (const k of ONLINE_X) out.add(k);
   return [...out];
 }
 

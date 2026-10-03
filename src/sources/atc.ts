@@ -31,7 +31,44 @@ const NON_SITE_HOSTS = [
   'adstransparency.google', 'youtube.com', 'youtu.be', 'play.google.com',
   'apps.apple.com', 'itunes.apple.com', 'blogger.com', 'goo.gl', 'gmail.com',
   'googlemail.com', 'support.google.com', 'policies.google.com',
+  'ampproject.org', 'ytimg.com', 'youtube-nocookie.com', 'amp.dev',
+  'adservice.google.com', 'w3.org', 'schema.org', 'adform.net', 'adsrvr.org',
 ];
+
+/**
+ * 从创意的 content.js 预览脚本中提取落地域名。
+ * 创意内容里的 displayads-formats.googleusercontent.com/ads/preview/content.js
+ * 返回广告的 HTML 源码，其中包含真实落地页链接。
+ */
+export async function fetchContentJsDomain(
+  contentJsUrl: string
+): Promise<string | null> {
+  try {
+    const res = await fetch(contentJsUrl, {
+      headers: {
+        'user-agent': BROWSER_UA,
+        'referer': `${ATC_BASE}/?hl=en&region=anywhere`,
+        'accept': '*/*',
+      },
+      signal: AbortSignal.timeout(12_000),
+    });
+    if (!res.ok) return null;
+    const text = await res.text();
+    return extractDomainFromJson(text);
+  } catch {
+    return null;
+  }
+}
+
+/** 从创意内容片段中提取 content.js 预览脚本 URL */
+export function extractContentJsUrl(contentSnippet: string | null): string | null {
+  if (!contentSnippet) return null;
+  // 注意：URL 参数里含逗号（uiFeatures=12,54）等，需匹配到引号/反斜杠/空白为止
+  const m = contentSnippet.match(
+    /https:\/\/displayads-formats\.googleusercontent\.com\/ads\/preview\/content\.js\?[^"'\\\s]+/
+  );
+  return m ? m[0] : null;
+}
 
 export function normalizeDomainInput(input: string): string {
   let d = input.trim().toLowerCase();

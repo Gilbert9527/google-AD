@@ -288,6 +288,31 @@ api.post('/admin/keywords', async (c) => {
   return Response.json({ added: kws.length });
 });
 
+api.post('/admin/sites', async (c) => {
+  const denied = requireAdmin(c.env, c);
+  if (denied) return denied;
+  const body = (await c.req.json().catch(() => null)) as { domains?: string[] } | null;
+  if (!body?.domains?.length) return Response.json({ error: 'domains required' }, { status: 400 });
+  const now = Date.now();
+  const domains = body.domains
+    .map((d) => d.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').split(/[/?#]/)[0])
+    .filter((d) => d.includes('.') && d.length >= 4)
+    .slice(0, 1000);
+  for (let i = 0; i < domains.length; i += 80) {
+    const chunk = domains.slice(i, i + 80);
+    await c.env.DB.batch(
+      chunk.map((d) =>
+        c.env.DB.prepare(
+          `INSERT INTO sites (domain, source, first_seen, last_seen, status)
+           VALUES (?, 'manual', ?, ?, 'pending')
+           ON CONFLICT(domain) DO NOTHING`
+        ).bind(d, now, now)
+      )
+    );
+  }
+  return Response.json({ added: domains.length });
+});
+
 api.post('/admin/trigger', async (c) => {
   const denied = requireAdmin(c.env, c);
   if (denied) return denied;

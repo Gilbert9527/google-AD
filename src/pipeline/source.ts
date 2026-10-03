@@ -17,14 +17,18 @@ import {
   getCreativeLandingDomain,
   normalizeDomainInput,
 } from '../sources/atc';
-import { buildKeywordSeeds } from '../seed/keywords';
+import { buildKeywordSeeds, deriveKeywordsFromDomains } from '../seed/keywords';
+import { fetchContentJsDomain, extractContentJsUrl } from '../sources/atc';
+
+/** 每个广告主最多取几个创意的 content.js 预览来提取落地域名（Workers Paid 可调大） */
+const CONTENTJS_PER_ADV = 3;
 
 const now = () => Date.now();
 /** ATC 请求间隔（毫秒）：温和节奏降低 429 概率 */
 const ATC_SPACING_MS = 2000;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-const SEED_VERSION = '2'; // 关键词池版本，更新种子列表时递增以触发重新播种
+const SEED_VERSION = '3'; // 关键词池版本，更新种子列表时递增以触发重新播种
 
 async function seedKeywordsIfEmpty(db: D1Database): Promise<number> {
   const ver = await db
@@ -117,6 +121,8 @@ export interface SourceBatchReport {
   advertiserPages: number;
   domainVerifies: number;
   keywordsSeeded: number;
+  contentJsAttempts: number;
+  contentJsHits: number;
   errors: string[];
 }
 
@@ -131,7 +137,7 @@ export async function runSourceBatch(env: Env, _maxPages?: number): Promise<Sour
   const report: SourceBatchReport = {
     keywordsProcessed: 0, domainsDiscovered: 0, advertisersDiscovered: 0,
     creativesStored: 0, advertiserPages: 0, domainVerifies: 0,
-    keywordsSeeded: 0, errors: [],
+    keywordsSeeded: 0, contentJsAttempts: 0, contentJsHits: 0, errors: [],
   };
   void _maxPages;
 
@@ -144,8 +150,13 @@ export async function runSourceBatch(env: Env, _maxPages?: number): Promise<Sour
   let backoff = false; // 触发 429 后本轮剩余步骤跳过
 
   // ---- A. 关键词建议 ----
+  // "online X" 最优先（实测会返回域名建议，如 onlinecasino-*），
+  // 其次其它多词查询，最后单核心词（只出广告主名）
   const kwRows = await db
-    .prepare("SELECT keyword FROM keywords WHERE status = 'pending' ORDER BY keyword LIMIT 4")
+    .prepare(
+      `SELECT keyword FROM keywords WHERE status = 'pending'
+       ORDER BY (keyword LIKE 'online %') DESC, (keyword LIKE '% %') DESC, keyword LIMIT 4`
+    )
     .all<{ keyword: string }>();
   let kwBudget = 2;
   for (const kw of kwRows.results || []) {
@@ -217,15 +228,32 @@ export async function runSourceBatch(env: Env, _maxPages?: number): Promise<Sour
           raw: c.contentSnippet,
         };
       });
-      // 列表响应没带落地域名时，用创意详情兜底（每个广告主最多 1 次额外请求）
+      // 落地域名提取：优先 content.js 预览脚本（含真实落地页链接），
+      // 再用创意详情兜底（每个广告主最多 CONTENTJS_PER_ADV + 1 次额外请求）
       if (domains.size === 0 && page.creatives.length > 0) {
-        const first = page.creatives[0];
-        const advId = first.advertiserId || adv.advertiser_id;
-        if (advId) {
-          const landing = await getCreativeLandingDomain(db, advId, first.creativeId);
-          if (landing) {
-            domains.add(landing);
-            if (rows.length) rows[0].domain = landing;
+        for (const c of page.creatives) {
+          if (domains.size >= 2) break;
+          const jsUrl = extractContentJsUrl(c.contentSnippet);
+          if (!jsUrl) continue;
+          report.contentJsAttempts++;
+          const dom = await fetchContentJsDomain(jsUrl);
+          if (dom) {
+            report.contentJsHits++;
+            domains.add(dom);
+            const row = rows.find((r) => r.creativeId === c.creativeId);
+            if (row) row.domain = dom;
+          }
+          if (domains.size >= 2) break;
+        }
+        if (domains.size === 0) {
+          const first = page.creatives[0];
+          const advId = first.advertiserId || adv.advertiser_id;
+          if (advId) {
+            const landing = await getCreativeLandingDomain(db, advId, first.creativeId);
+            if (landing) {
+              domains.add(landing);
+              if (rows.length) rows[0].domain = landing;
+            }
           }
         }
       }
@@ -253,6 +281,39 @@ export async function runSourceBatch(env: Env, _maxPages?: number): Promise<Sour
         db.prepare("UPDATE advertisers SET done = 1 WHERE advertiser_id = ?").bind(id)
       )
     );
+  }
+
+  // ---- B2. 存量创意挖掘：从已入库的 HTML 广告 content.js 提取落地域名 ----
+  // content.js 走 googleusercontent.com，不占透明度中心 RPC 配额
+  try {
+    const mined = await db
+      .prepare(
+        `SELECT creative_id, advertiser_id, raw FROM creatives
+         WHERE domain IS NULL AND raw LIKE '%displayads-formats%'
+           AND (advertiser_id IS NULL OR advertiser_id NOT IN
+                (SELECT DISTINCT advertiser_id FROM creatives WHERE domain IS NOT NULL))
+         ORDER BY first_shown DESC LIMIT 3`
+      )
+      .all<{ creative_id: string; advertiser_id: string | null; raw: string }>();
+    for (const row of mined.results || []) {
+      const jsUrl = extractContentJsUrl(row.raw);
+      if (!jsUrl) continue;
+      const dom = await fetchContentJsDomain(jsUrl);
+      if (!dom) continue;
+      report.contentJsAttempts++;
+      report.contentJsHits++;
+      await db
+        .prepare('UPDATE creatives SET domain = ? WHERE creative_id = ? AND advertiser_id IS ?')
+        .bind(dom, row.creative_id, row.advertiser_id)
+        .run();
+      await db.batch([upsertSiteStmt(db, dom, 'atc_creative')]);
+      report.domainsDiscovered++;
+      await sleep(1200);
+    }
+  } catch (e) {
+    if (report.errors.length < 6) {
+      report.errors.push('mine: ' + (e instanceof Error ? e.message : String(e)));
+    }
   }
 
   // ---- C. 域名验证（确认有广告 + 广告主关联 + 广告数）----
@@ -308,6 +369,26 @@ export async function runSourceBatch(env: Env, _maxPages?: number): Promise<Sour
         report.errors.push('verify: ' + msg);
       }
     }
+  }
+
+  // ---- D. 域名反哺关键词（雪球）：拿最新发现的域名派生新关键词 ----
+  try {
+    const recentSites = await db
+      .prepare(
+        `SELECT domain FROM sites WHERE source LIKE 'atc%' ORDER BY first_seen DESC LIMIT 2`
+      )
+      .all<{ domain: string }>();
+    const derived = deriveKeywordsFromDomains(recentSites.results?.map((r) => r.domain) || []);
+    if (derived.length) {
+      await db.batch(
+        derived.map((k) =>
+          db.prepare('INSERT OR IGNORE INTO keywords (keyword) VALUES (?)').bind(k)
+        )
+      );
+      report.domainsDiscovered += 0; // 不重复计数，仅扩充关键词池
+    }
+  } catch {
+    /* 雪球步骤失败不影响主流程 */
   }
 
   return report;
