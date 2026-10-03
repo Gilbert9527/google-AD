@@ -22,6 +22,7 @@ import {
   fetchContentJsDomain,
   extractContentJsUrl,
   hasSubstantiveAssets,
+  domainMatchesAdvertiser,
 } from '../sources/atc';
 
 /** 每个广告主最多取几个创意的 content.js 预览来提取落地域名（Workers Paid 可调大） */
@@ -205,13 +206,13 @@ export async function runSourceBatch(env: Env, _maxPages?: number): Promise<Sour
   const advBudget = 4;
   const advRows = await db
     .prepare(
-      `SELECT a.advertiser_id, a.domain FROM advertisers a
+      `SELECT a.advertiser_id, a.domain, a.name FROM advertisers a
        LEFT JOIN sites s ON s.domain = a.domain
        WHERE a.done = 0 AND (a.domain IS NULL OR s.domain IS NULL)
        ORDER BY RANDOM() LIMIT ?`
     )
     .bind(advBudget)
-    .all<{ advertiser_id: string; domain: string | null }>();
+    .all<{ advertiser_id: string; domain: string | null; name: string | null }>();
 
   const doneIds: string[] = [];
   for (const adv of advRows.results || []) {
@@ -241,7 +242,7 @@ export async function runSourceBatch(env: Env, _maxPages?: number): Promise<Sour
           if (!jsUrl || !hasSubstantiveAssets(jsUrl)) continue;
           report.contentJsAttempts++;
           const dom = await fetchContentJsDomain(jsUrl);
-          if (dom) {
+          if (dom && domainMatchesAdvertiser(dom, adv.name)) {
             report.contentJsHits++;
             domains.add(dom);
             const row = rows.find((r) => r.creativeId === c.creativeId);
@@ -292,7 +293,8 @@ export async function runSourceBatch(env: Env, _maxPages?: number): Promise<Sour
   try {
     const mined = await db
       .prepare(
-        `SELECT c.creative_id AS creative_id, c.advertiser_id AS advertiser_id, c.raw AS raw
+        `SELECT c.creative_id AS creative_id, c.advertiser_id AS advertiser_id, c.raw AS raw,
+                a.name AS advertiser_name
          FROM creatives c LEFT JOIN advertisers a ON a.advertiser_id = c.advertiser_id
          WHERE c.domain IS NULL AND c.raw LIKE '%displayads-formats%'
            AND (c.advertiser_id IS NULL OR c.advertiser_id NOT IN
@@ -303,7 +305,7 @@ export async function runSourceBatch(env: Env, _maxPages?: number): Promise<Sour
                  WHERE c2.domain IS NOT NULL AND a2.name IS NOT NULL AND a2.name != ''))
          ORDER BY RANDOM() LIMIT 15`
       )
-      .all<{ creative_id: string; advertiser_id: string | null; raw: string }>();
+      .all<{ creative_id: string; advertiser_id: string | null; raw: string; advertiser_name: string | null }>();
     const newDomains = new Set<string>();
     for (const row of mined.results || []) {
       const jsUrl = extractContentJsUrl(row.raw);
@@ -311,6 +313,8 @@ export async function runSourceBatch(env: Env, _maxPages?: number): Promise<Sour
       const dom = await fetchContentJsDomain(jsUrl);
       if (!dom) continue;
       report.contentJsAttempts++;
+      // 域名必须与广告主名称相符（拦截过期创意的通用广告壳假阳性）
+      if (!domainMatchesAdvertiser(dom, row.advertiser_name)) continue;
       // 即使域名已知也回填创意链接（丰富站点详情的广告记录）
       await db
         .prepare('UPDATE creatives SET domain = ? WHERE creative_id = ? AND advertiser_id IS ?')

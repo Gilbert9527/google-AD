@@ -83,6 +83,34 @@ export function hasSubstantiveAssets(contentJsUrl: string): boolean {
   return m[1].length >= 60;
 }
 
+/** 广告主名称里的通用企业词，不参与域名匹配 */
+const NAME_STOPWORDS = new Set([
+  'online', 'shop', 'store', 'ltd', 'llc', 'inc', 'gmbh', 'limited', 'group',
+  'company', 'academy', 'design', 'media', 'digital', 'solutions', 'services',
+  'marketing', 'agency', 'studio', 'labs', 'tech', 'software', 'systems',
+  'ventures', 'holdings', 'capital', 'partners', 'the', 'and', 'for', 'with',
+  'sales', 'global', 'official', 'site', 'web', 'app', 'apps', 'club',
+]);
+
+/**
+ * 校验提取的落地域名与广告主名称是否相符（token 重叠）。
+ * 已过期创意会渲染通用广告壳，其默认演示广告链接固定指向某大站，
+ * 该校验能把这些假阳性拦掉（如 "XX博彩公司" 的创意链接到 github.com）。
+ */
+export function domainMatchesAdvertiser(domain: string, advertiserName: string | null): boolean {
+  if (!advertiserName) return false; // 无名称无法校验，宁缺毋滥
+  const d = domain.replace(
+    /\.(com|net|org|io|co|me|app|xyz|online|site|shop|store|blog|news|top|vip|club|live|fun|tech|info|biz|us|uk|ca|de|fr|es|it|nl|se|pl|ru|br|in|jp|kr)$/i,
+    ''
+  );
+  const tokens = advertiserName
+    .toLowerCase()
+    .split(/[^a-z0-9\u4e00-\u9fff]+/)
+    .filter((t) => t.length >= 3 && !NAME_STOPWORDS.has(t) && !/^\d+$/.test(t));
+  if (!tokens.length) return false;
+  return tokens.some((t) => d.includes(t));
+}
+
 export function normalizeDomainInput(input: string): string {
   let d = input.trim().toLowerCase();
   d = d.replace(/^https?:\/\//, '').split(/[/?#]/)[0];
