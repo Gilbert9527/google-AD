@@ -24,6 +24,7 @@ import {
   hasSubstantiveAssets,
   domainMatchesAdvertiser,
 } from '../sources/atc';
+import { importSeedChunk, pendingCount } from '../sources/seeds';
 
 /** 每个广告主最多取几个创意的 content.js 预览来提取落地域名（Workers Paid 可调大） */
 const CONTENTJS_PER_ADV = 3;
@@ -128,6 +129,7 @@ export interface SourceBatchReport {
   keywordsSeeded: number;
   contentJsAttempts: number;
   contentJsHits: number;
+  seedsImported: number;
   errors: string[];
 }
 
@@ -142,7 +144,8 @@ export async function runSourceBatch(env: Env, _maxPages?: number): Promise<Sour
   const report: SourceBatchReport = {
     keywordsProcessed: 0, domainsDiscovered: 0, advertisersDiscovered: 0,
     creativesStored: 0, advertiserPages: 0, domainVerifies: 0,
-    keywordsSeeded: 0, contentJsAttempts: 0, contentJsHits: 0, errors: [],
+    keywordsSeeded: 0, contentJsAttempts: 0, contentJsHits: 0,
+    seedsImported: 0, errors: [],
   };
   void _maxPages;
 
@@ -386,6 +389,20 @@ export async function runSourceBatch(env: Env, _maxPages?: number): Promise<Sour
       if (report.errors.length < 6) {
         report.errors.push('verify: ' + msg);
       }
+    }
+  }
+
+  // ---- E. 种子队列自补：待抓队列不足时从榜单（KV）补充候选站点 ----
+  try {
+    const pending = await pendingCount(db);
+    const minPending = getNum(env.SEED_MIN_PENDING, 3000);
+    if (pending < minPending) {
+      const topup = getNum(env.SEED_TOPUP_PER_RUN, 500);
+      report.seedsImported = await importSeedChunk(env, topup);
+    }
+  } catch (e) {
+    if (report.errors.length < 6) {
+      report.errors.push('seed-topup: ' + (e instanceof Error ? e.message : String(e)));
     }
   }
 

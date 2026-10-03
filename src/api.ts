@@ -10,6 +10,7 @@ import { runSourceBatch } from './pipeline/source';
 import { runCrawlBatch } from './pipeline/crawl';
 import { runEnrichBatch, enrichSingleSite } from './pipeline/enrich';
 import { runAiBatch, analyzeSingleSite } from './pipeline/ai';
+import { importSeedChunk } from './sources/seeds';
 
 const api = new Hono<{ Bindings: Env }>();
 
@@ -288,8 +289,16 @@ api.post('/admin/keywords', async (c) => {
   return Response.json({ added: kws.length });
 });
 
-api.post('/admin/sites', async (c) => {
+api.post('/admin/import-seed', async (c) => {
   const denied = requireAdmin(c.env, c);
+  if (denied) return denied;
+  const body = (await c.req.json().catch(() => ({}))) as { count?: number };
+  const count = Math.min(50_000, Math.max(1, body.count || 1000));
+  const imported = await importSeedChunk(c.env, count);
+  return Response.json({ imported, count });
+});
+
+api.post('/admin/sites', async (c) => {  const denied = requireAdmin(c.env, c);
   if (denied) return denied;
   const body = (await c.req.json().catch(() => null)) as { domains?: string[] } | null;
   if (!body?.domains?.length) return Response.json({ error: 'domains required' }, { status: 400 });

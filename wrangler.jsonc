@@ -21,6 +21,12 @@
       "database_id": "90db2093-bc3a-4b61-a046-678d4972fa33"
     }
   ],
+  "kv_namespaces": [
+    {
+      "binding": "SEEDS",
+      "id": "89f9d3f6d8f84953b765b52a963257f0"
+    }
+  ],
   "ai": {
     "binding": "AI"
   },
@@ -38,13 +44,20 @@
     // 每 10 分钟一轮：透明度中心关键词搜索页数
     "BATCH_SOURCE_PAGES": "20",
     // 每 5 分钟一轮：抓取站点数
-    "BATCH_CRAWL_SITES": "20",
+    "BATCH_CRAWL_SITES": "30",
     // 每 30 分钟一轮：第三方数据富化站点数
     "BATCH_ENRICH_SITES": "12",
     // 每天 01:00：Workers AI 深度分析站点数
     "BATCH_AI_SITES": "150",
     // Workers AI 每日调用上限（免费额度保护）
-    "AI_DAILY_LIMIT": "300"
+    "AI_DAILY_LIMIT": "300",
+    // ===== 榜单种子（Majestic Million 前 25 万，存 KV）=====
+    // 每 10 分钟源轮次：待抓队列低于阈值时自动补充的种子数
+    "SEED_TOPUP_PER_RUN": "500",
+    // 待抓队列低于该值才补充
+    "SEED_MIN_PENDING": "3000",
+    // 每天 01:00 固定导入的种子数
+    "SEED_IMPORT_PER_DAY": "10000"
   }
   // secrets（用 `wrangler secret put` 设置，不要写进本文件）:
   //   ADMIN_TOKEN     - 管理接口鉴权

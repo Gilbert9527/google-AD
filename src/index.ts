@@ -3,11 +3,13 @@
  */
 import { Hono } from 'hono';
 import type { Env } from './env';
+import { num } from './env';
 import { api } from './api';
 import { runSourceBatch } from './pipeline/source';
 import { runCrawlBatch } from './pipeline/crawl';
 import { runEnrichBatch } from './pipeline/enrich';
 import { runAiBatch } from './pipeline/ai';
+import { importSeedChunk } from './sources/seeds';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -55,9 +57,10 @@ export default {
         const r = await runEnrichBatch(env);
         await log('ok ' + JSON.stringify(r));
       } else if (cron === '0 1 * * *') {
-        // 每日 AI 深度分析
+        // 每日 AI 深度分析 + 固定补充榜单种子
         const r = await runAiBatch(env);
-        await log('ok ' + JSON.stringify(r));
+        const seeds = await importSeedChunk(env, num(env.SEED_IMPORT_PER_DAY, 10000));
+        await log('ok ' + JSON.stringify({ ai: r, seedsImported: seeds }));
       }
     } catch (e) {
       console.error('[scheduled error]', cron, e instanceof Error ? e.stack : String(e));
