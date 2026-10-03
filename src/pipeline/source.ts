@@ -292,7 +292,7 @@ export async function runSourceBatch(env: Env, _maxPages?: number): Promise<Sour
          WHERE domain IS NULL AND raw LIKE '%displayads-formats%'
            AND (advertiser_id IS NULL OR advertiser_id NOT IN
                 (SELECT DISTINCT advertiser_id FROM creatives WHERE domain IS NOT NULL))
-         ORDER BY first_shown DESC LIMIT 3`
+         ORDER BY RANDOM() LIMIT 3`
       )
       .all<{ creative_id: string; advertiser_id: string | null; raw: string }>();
     for (const row of mined.results || []) {

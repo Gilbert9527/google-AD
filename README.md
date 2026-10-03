@@ -88,6 +88,22 @@ npx wrangler secret put RADAR_TOKEN
 
 免费版全速运行约 **7-10 天**积累 6 万站点；Workers Paid（$5/月，解除 CPU/subrequest 限制）约 **1-2 天**完成首采。Cron 频率可在 `wrangler.jsonc` 的 `triggers.crons` 调整。
 
+### 实测踩坑记录（2026-10）
+
+- **Google 429 限流**：透明度中心 RPC 对数据中心 IP（含 CF Workers 出口）有严格限流，突发 ~30 请求/小时即触发。已内置：每轮小批量 + 2s 请求间隔 + 429 后全局退避 12 分钟（kv 记录），解封自动恢复。
+- **域名建议收窄**：SearchSuggestions 的域名建议（"2" 数组）仅当查询词能匹配真实广告主域名前缀时返回（如 "online casino" → onlinecasino-*），且谷歌会动态调整。主发现引擎因此改为：**关键词→广告主→创意→content.js 预览脚本→落地域名**。
+- **落地域名提取**：广告主创意列表响应不含落地域名；HTML/展示广告的 `displayads-formats.googleusercontent.com/ads/preview/content.js` 预览脚本内含真实落地链接（注意 URL 参数含逗号，正则需匹配到引号为止）。
+- **Wayback CDX**：archive.org 会拦截部分数据中心 IP，Cloudflare Workers 上可能拿不到（本地/代理环境正常）。RDAP 已改用 Verisign 官方端点（rdap.org 同样拦 DC IP）。
+- **D1 本地库**：`wrangler d1 create` 前后 database_id 变化会使本地 `.wrangler/state` 里的旧库失联，重新执行 `npm run db:local` 即可。
+
+### 运行日志（无需登录 dashboard）
+
+每轮 cron 的执行结果写入 D1 的 `kv` 表（保留最近 80 条）：
+
+```bash
+npx wrangler d1 execute google-ad --remote -y --command "SELECT v FROM kv WHERE k LIKE 'log_%' ORDER BY k DESC LIMIT 10"
+```
+
 ## 第三方数据平台选型说明
 
 | 平台 | 数据 | 价格 | 本项目 |

@@ -33,40 +33,61 @@ async function fetchJson(url: string, init?: RequestInit): Promise<unknown | nul
 
 // ---------- RDAP ----------
 
+/**
+ * 域名注册信息。rdap.org 会拦截数据中心 IP（403），
+ * 因此 .com/.net 直接走 Verisign 官方 RDAP，其余 TLD 走 IANA 引导表。
+ */
 export async function enrichRdap(domain: string): Promise<string | null> {
-  const data = (await fetchJson(`https://rdap.org/domain/${encodeURIComponent(domain)}`)) as
-    | { events?: { eventAction?: string; eventDate?: string }[]; entities?: { roles?: string[]; vcardArray?: unknown[] }[]; ldhName?: string }
-    | null;
-  if (!data) return null;
-  const registered = data.events?.find((e) => e.eventAction === 'registration')?.eventDate || null;
-  const registrar = data.entities?.find((e) => e.roles?.includes('registrar'))?.vcardArray?.[1] as
-    | [string, unknown[]]
-    | undefined;
-  const registrarName = Array.isArray(registrar)
-    ? (registrar[1]?.find((x) => Array.isArray(x) && x[0] === 'fn') as unknown[] | undefined)?.[1] ?? null
-    : null;
-  return JSON.stringify({
-    registered,
-    registrar: typeof registrarName === 'string' ? registrarName : null,
-  });
+  const urls: string[] = [];
+  const tld = domain.split('.').pop()?.toLowerCase() || '';
+  if (tld === 'com' || tld === 'net') {
+    urls.push(`https://rdap.verisign.com/${tld}/v1/domain/${encodeURIComponent(domain)}`);
+  } else {
+    // IANA RDAP 引导：查 TLD 对应的官方 RDAP 服务
+    const boot = (await fetchJson('https://data.iana.org/rdap/dns.json')) as
+      | { services?: [string[], string[]][] }
+      | null;
+    const base = boot?.services?.find(([tlds]) => tlds.includes(tld))?.[1]?.[0];
+    if (base) urls.push(`${base.replace(/\/$/, '')}/domain/${encodeURIComponent(domain)}`);
+  }
+  urls.push(`https://rdap.org/domain/${encodeURIComponent(domain)}`);
+
+  for (const url of urls) {
+    const data = (await fetchJson(url)) as
+      | { events?: { eventAction?: string; eventDate?: string }[]; entities?: { roles?: string[]; vcardArray?: unknown[] }[] }
+      | null;
+    if (!data) continue;
+    const registered = data.events?.find((e) => e.eventAction === 'registration')?.eventDate || null;
+    if (!registered && !data.entities) continue;
+    const registrarEnt = data.entities?.find((e) => e.roles?.includes('registrar'));
+    let registrarName: string | null = null;
+    const vcard = registrarEnt?.vcardArray?.[1];
+    if (Array.isArray(vcard)) {
+      const fn = vcard.find((x) => Array.isArray(x) && x[0] === 'fn') as unknown[] | undefined;
+      registrarName = typeof fn?.[3] === 'string' ? fn[3] : null;
+    }
+    return JSON.stringify({ registered, registrar: registrarName });
+  }
+  return null;
 }
 
 // ---------- Wayback ----------
 
 export async function enrichWayback(domain: string): Promise<string | null> {
-  const data = (await fetchJson(
-    `https://web.archive.org/cdx/search/cdx?url=${encodeURIComponent(domain)}&matchType=domain&fl=timestamp&filter=statuscode:200&limit=1`
-  )) as unknown;
-  // CDX 返回纯文本 JSON 视参数而定；这里返回数组或文本
-  let first: string | null = null;
-  if (Array.isArray(data)) {
-    const row = (data as unknown[])[0];
-    if (Array.isArray(row)) first = String(row[0]);
-    else if (typeof row === 'string') first = row;
-  } else if (typeof data === 'string') {
-    first = data.split('\n')[0]?.trim() || null;
+  // CDX 返回纯文本而非 JSON，不能用 fetchJson
+  let text: string;
+  try {
+    const res = await fetch(
+      `https://web.archive.org/cdx/search/cdx?url=${encodeURIComponent(domain)}&matchType=domain&fl=timestamp&filter=statuscode:200&limit=1`,
+      { signal: TIMEOUT(15_000) }
+    );
+    if (!res.ok) return null;
+    text = await res.text();
+  } catch {
+    return null;
   }
-  if (!first) return null;
+  const first = text.split('\n')[0]?.trim() || null;
+  if (!first || !/^\d{4,}/.test(first)) return null;
   const year = first.slice(0, 4);
   return JSON.stringify({ firstSnapshot: first, year: /^\d{4}$/.test(year) ? Number(year) : null });
 }
