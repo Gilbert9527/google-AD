@@ -25,6 +25,7 @@ import {
   domainMatchesAdvertiser,
 } from '../sources/atc';
 import { importSeedChunk, pendingCount } from '../sources/seeds';
+import { computeAdScore } from '../analyze/value';
 
 /** 每个广告主最多取几个创意的 content.js 预览来提取落地域名（Workers Paid 可调大） */
 const CONTENTJS_PER_ADV = 3;
@@ -378,9 +379,21 @@ export async function runSourceBatch(env: Env, _maxPages?: number): Promise<Sour
         await upsertAdvertisers(db, advs);
         report.advertisersDiscovered += advs.length;
       }
+      // 广告活跃度评分（基于广告样本）
+      const formats = new Set(
+        page.creatives.map((c) => c.formatHint).filter((f): f is number => typeof f === 'number')
+      );
+      const shownTimes = page.creatives.map((c) => c.lastShown).filter((t): t is number => !!t);
+      const firstTimes = page.creatives.map((c) => c.firstShown).filter((t): t is number => !!t);
+      const adScore = computeAdScore({
+        adCount: adTotal,
+        firstShown: firstTimes.length ? Math.min(...firstTimes) : null,
+        lastShown: shownTimes.length ? Math.max(...shownTimes) : null,
+        formats,
+      });
       await db
-        .prepare('UPDATE sites SET ad_count = ?, last_seen = ? WHERE domain = ?')
-        .bind(adTotal, now(), site.domain)
+        .prepare('UPDATE sites SET ad_count = ?, ad_score = ?, last_seen = ? WHERE domain = ?')
+        .bind(adTotal, adScore, now(), site.domain)
         .run();
       report.domainVerifies++;
     } catch (e) {

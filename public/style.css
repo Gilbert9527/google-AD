@@ -93,6 +93,8 @@ table.list { width: 100%; border-collapse: collapse; font-size: 13.5px; }
 .adsense-yes { color: var(--green); }
 .adsense-no { color: var(--muted); }
 .adcnt { color: var(--amber); font-size: 12px; }
+.ad-score { color: var(--accent2); font-size: 12px; margin-top: 2px; }
+.muted { color: var(--muted); font-size: 11px; }
 .loading, .empty { text-align: center; color: var(--muted); padding: 40px 0 !important; }
 .pager { display: flex; gap: 8px; justify-content: center; align-items: center; padding: 14px; }
 .pager button {

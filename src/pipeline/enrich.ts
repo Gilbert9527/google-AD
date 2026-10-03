@@ -6,8 +6,41 @@ import { num } from '../env';
 import {
   enrichRdap, enrichWayback, enrichRadar, enrichCrux, enrichPsi,
 } from '../enrich/providers';
+import { computeAdScore } from '../analyze/value';
 
 const now = () => Date.now();
+
+/** 已有广告数据但未评分的站点：补算广告活跃度评分 */
+export async function backfillAdScores(db: D1Database, limit = 10): Promise<number> {
+  const rows = await db
+    .prepare(
+      `SELECT domain, ad_count FROM sites
+       WHERE ad_count IS NOT NULL AND ad_score IS NULL LIMIT ?`
+    )
+    .bind(limit)
+    .all<{ domain: string; ad_count: number }>();
+  let n = 0;
+  for (const row of rows.results || []) {
+    const agg = await db
+      .prepare(
+        `SELECT MIN(first_shown) AS f, MAX(last_shown) AS l, COUNT(DISTINCT format) AS fmts
+         FROM creatives WHERE domain = ?`
+      )
+      .bind(row.domain)
+      .first<{ f: number | null; l: number | null; fmts: number }>();
+    const formats = new Set<number>();
+    for (let i = 1; i <= (agg?.fmts || 0); i++) formats.add(i);
+    const score = computeAdScore({
+      adCount: row.ad_count,
+      firstShown: agg?.f ?? null,
+      lastShown: agg?.l ?? null,
+      formats,
+    });
+    await db.prepare('UPDATE sites SET ad_score = ? WHERE domain = ?').bind(score, row.domain).run();
+    n++;
+  }
+  return n;
+}
 
 export interface EnrichBatchReport { attempted: number; enriched: number; }
 
@@ -15,6 +48,13 @@ export async function runEnrichBatch(env: Env, batchSize?: number): Promise<Enri
   const db = env.DB;
   const limit = batchSize ?? num(env.BATCH_ENRICH_SITES, 12);
   const report: EnrichBatchReport = { attempted: 0, enriched: 0 };
+
+  // 顺手补算广告活跃度评分（不占外部请求配额）
+  try {
+    await backfillAdScores(db, 10);
+  } catch {
+    /* ignore */
+  }
 
   const rows = await db
     .prepare(

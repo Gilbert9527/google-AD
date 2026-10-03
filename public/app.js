@@ -78,8 +78,9 @@
             <td>
               <div class="${it.adsense ? 'adsense-yes' : 'adsense-no'}">${it.adsense ? '✓ AdSense' : '—'}</div>
               ${it.adCount ? `<div class="adcnt">${Number(it.adCount).toLocaleString()} 条广告</div>` : ''}
+              ${it.adScore !== null && it.adScore !== undefined ? `<div class="ad-score">活跃度 ${it.adScore}/100</div>` : ''}
             </td>
-            <td>${it.rank ? '#' + it.rank.toLocaleString() : '–'}</td>
+            <td>${it.rank ? '#' + it.rank.toLocaleString() : (it.majesticRank ? '#' + it.majesticRank.toLocaleString() + ' <span class="muted">Maj</span>' : '–')}</td>
             <td style="white-space:nowrap;color:var(--muted);">${fmtTime(it.firstSeen)}</td>
           </tr>`
         )
@@ -140,6 +141,12 @@
     const ai = d.ai || {};
     const fmtTs = (ts) => (ts ? new Date(ts * 1000).toISOString().slice(0, 10) : '–');
 
+    // AdSense 收入粗估展示
+    const fmtMoney = (v) => '$' + Number(v).toLocaleString();
+    const revenueBlock = d.revenue
+      ? `<div class="kv"><span class="k">预估广告收入</span><span class="v"><b>${fmtMoney(d.revenue.low)} – ${fmtMoney(d.revenue.high)}</b> / 月（粗估）<br><span style="color:var(--muted);font-size:12px;">月访问 ~${Number(d.revenue.visits).toLocaleString()}（排名幂律近似）× 类目 RPM $${d.revenue.rpmLow}-${d.revenue.rpmHigh}/千次展示</span></span></div>`
+      : '';
+
     body.innerHTML = `
       <h2>${esc(d.domain)}</h2>
       <div class="d-sub">
@@ -164,11 +171,14 @@
       <div class="d-section">
         <h3>📈 网站数据</h3>
         <div class="d-card">
-          <div class="kv"><span class="k">全球排名</span><span class="v">${data.rank ? '#' + Number(data.rank).toLocaleString() + '（Cloudflare Radar）' : '暂无（需 RADAR_TOKEN）'}</span></div>
+          <div class="kv"><span class="k">全球排名</span><span class="v">${data.rank ? '#' + Number(data.rank).toLocaleString() + '（Cloudflare Radar）' : (d.majesticRank ? '#' + Number(d.majesticRank).toLocaleString() + '（Majestic）' : '暂无')}</span></div>
+          ${d.refIps ? `<div class="kv"><span class="k">外链权重</span><span class="v">${Number(d.refIps).toLocaleString()} 个引用 IP（Majestic，流量代理指标）</span></div>` : ''}
           <div class="kv"><span class="k">域名注册</span><span class="v">${esc(rdap.registered || '–')}${rdap.registrar ? ' · ' + esc(rdap.registrar) : ''}</span></div>
           <div class="kv"><span class="k">最早快照</span><span class="v">${wayback.year ? wayback.year + ' 年（Wayback Machine）' : '–'}</span></div>
           ${crux.lcp ? `<div class="kv"><span class="k">加载体验</span><span class="v">LCP ${esc(crux.lcp.p75)}ms · INP ${esc((crux.inp || {}).p75)}ms · CLS ${esc((crux.cls || {}).p75)}（Google 真实用户）</span></div>` : ''}
-          <div class="kv"><span class="k">抓取状态</span><span class="v">HTTP ${esc(d.httpStatus ?? '–')} · ${d.adsense ? '<span class="adsense-yes">检测到 AdSense 代码 ' + esc(d.adClient || '') + '</span>' : '未检测到 AdSense'}</span></div>
+          ${revenueBlock}
+          <div class="kv"><span class="k">广告活跃度</span><span class="v">${d.adScore !== null && d.adScore !== undefined ? d.adScore + ' / 100（投放量·时效·格式·周期综合评分）' : (d.adCount ? '评分计算中' : '暂无广告主数据')}</span></div>
+          <div class="kv"><span class="k">抓取状态</span><span class="v">HTTP ${esc(d.httpStatus ?? '–')} · ${d.adsense ? '<span class="adsense-yes">检测到 Google 广告代码 ' + esc(d.adClient || '') + '</span>' : '未检测到 AdSense'}</span></div>
           <div class="kv"><span class="k">发现时间</span><span class="v">${fmtTime(d.firstSeen)} · 最近抓取 ${fmtTime(d.lastCrawled)}</span></div>
         </div>
       </div>

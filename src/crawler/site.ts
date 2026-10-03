@@ -13,6 +13,7 @@ export interface SiteCrawl {
   adsense: boolean;
   adClient: string | null;
   contentSample: string | null;
+  outLinks: string[];            // 首页外链域名（衍生候选，一跳发现）
   error?: string;
 }
 
@@ -21,6 +22,28 @@ const BROWSER_UA =
 
 const HTML_MAX = 400_000; // 截断，防 CPU 超限
 const TEXT_MAX = 6000; // 存库正文样本长度
+
+/** 外链发现时排除的枢纽/基础设施域名 */
+const HUB_HOSTS = [
+  'google.com', 'googleapis.com', 'gstatic.com', 'googleusercontent.com',
+  'googlesyndication.com', 'googleadservices.com', 'doubleclick.net',
+  'youtube.com', 'youtu.be', 'facebook.com', 'instagram.com', 'twitter.com',
+  'x.com', 'tiktok.com', 'pinterest.com', 'linkedin.com', 'reddit.com',
+  'wikipedia.org', 'wikimedia.org', 'amazon.com', 'apple.com', 'microsoft.com',
+  'live.com', 'office.com', 'cloudflare.com', 'wordpress.org', 'wordpress.com',
+  'wix.com', 'wixsite.com', 'shopify.com', 'blogspot.com', 'medium.com',
+  'telegram.me', 't.me', 'discord.gg', 'discord.com', 'github.com', 'gitlab.com',
+  'bitbucket.org', 'whatsapp.com', 'weibo.com', 'baidu.com', 'qq.com',
+  'tencent.com', 'alibaba.com', 'taobao.com', 'jd.com', 'bilibili.com',
+  'zhihu.com', 'douyin.com', 'bytedance.com', 'netease.com', '163.com',
+  'sohu.com', 'aliyun.com', 'gravatar.com', 'vimeo.com', 'twitch.tv',
+  'spotify.com', 'soundcloud.com', 'flickr.com', 'unsplash.com', 'pexels.com',
+  'adobe.com', 'canva.com', 'mailchimp.com', 'hubspot.com', 'cookiebot.com',
+  'cloudwaysapps.com', 'squarespace.com', 'godaddy.com', 'namecheap.com',
+  'web.archive.org', 'archive.org', 'mozilla.org', 'w3.org', 'schema.org',
+  'gmpg.org', 'fontawesome.com', 'jquery.com', 'bootstrapcdn.com',
+  'cloudways.com', 'sitelock.com', 'google.bg', 'googletagmanager.com',
+];
 
 function decodeEntities(s: string): string {
   return s
@@ -60,7 +83,7 @@ export async function crawlSite(domain: string): Promise<SiteCrawl> {
   const fail = (error: string): SiteCrawl => ({
     httpStatus: null, finalUrl: null, finalDomain: null, title: null,
     description: null, lang: null, adsense: false, adClient: null,
-    contentSample: null, error,
+    contentSample: null, outLinks: [], error,
   });
   const url = `https://${domain}/`;
   let res: Response;
@@ -100,7 +123,8 @@ export async function crawlSite(domain: string): Promise<SiteCrawl> {
   if (ct && !ct.includes('html') && !ct.includes('xml') && !ct.includes('text')) {
     return {
       httpStatus, finalUrl, finalDomain, title: null, description: null, lang: null,
-      adsense: false, adClient: null, contentSample: null, error: `non-html content-type: ${ct}`,
+      adsense: false, adClient: null, contentSample: null, outLinks: [],
+      error: `non-html content-type: ${ct}`,
     };
   }
 
@@ -125,12 +149,31 @@ export async function crawlSite(domain: string): Promise<SiteCrawl> {
   const langMatch = html.match(/<html[^>]+lang=["']([a-zA-Z-]{2,10})["']/i);
   const lang = langMatch ? langMatch[1].toLowerCase() : null;
 
+  // Google 广告接入检测：AdSense + Google Publisher Tag + Ad Manager
   const adsense =
-    /adsbygoogle|pagead2\.googlesyndication\.com|google_ad_client|ca-pub-\d{8,}/i.test(html);
+    /adsbygoogle|pagead2\.googlesyndication\.com|google_ad_client|ca-pub-\d{8,}|googletag\.pubads\(|securepubads\.g\.doubleclick\.net|partner\.googleadservices\.com|googlesyndication\.com|gpt\.js/i.test(html);
   const adClient =
     html.match(/google_ad_client\s*[:=]\s*["']([^"']+)["']/i)?.[1] ??
+    html.match(/data-ad-client=["'](ca-pub-\d{8,})["']/i)?.[1] ??
     html.match(/ca-pub-\d{8,}/i)?.[0] ??
     null;
+
+  // 一跳外链发现：从首页提取外部域名作为新候选（不发额外请求）
+  const outLinks: string[] = [];
+  const seenLinks = new Set<string>([domain, finalDomain || '']);
+  const baseSelf = domain.replace(/\.[a-z]+$/, '');
+  const linkRe = /href=["']https?:\/\/([a-zA-Z0-9][a-zA-Z0-9.-]*\.[a-z]{2,24})[/"'?]/gi;
+  let lm: RegExpExecArray | null;
+  while ((lm = linkRe.exec(html)) !== null && outLinks.length < 20) {
+    let host = lm[1].toLowerCase().replace(/^www\./, '');
+    if (seenLinks.has(host)) continue;
+    // 同主域的子域不算外链
+    if (host === domain || host.endsWith('.' + domain) || (baseSelf.length > 4 && host.includes(baseSelf))) continue;
+    if (HUB_HOSTS.some((b) => host === b || host.endsWith('.' + b))) continue;
+    if (host.length < 4 || host.split('.').length > 4) continue;
+    seenLinks.add(host);
+    outLinks.push(host);
+  }
 
   // 提取可见文本样本
   let text = html
@@ -141,5 +184,5 @@ export async function crawlSite(domain: string): Promise<SiteCrawl> {
     .replace(/<[^>]+>/g, ' ');
   const contentSample = decodeEntities(text).slice(0, TEXT_MAX) || null;
 
-  return { httpStatus, finalUrl, finalDomain, title, description, lang, adsense, adClient, contentSample };
+  return { httpStatus, finalUrl, finalDomain, title, description, lang, adsense, adClient, contentSample, outLinks };
 }

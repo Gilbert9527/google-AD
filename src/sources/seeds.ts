@@ -19,7 +19,14 @@ async function loadSeeds(): Promise<string[] | null> {
     });
     if (!res.ok) return null;
     const text = await res.text();
-    seedsCache = text.split('\n').map((d) => d.trim().toLowerCase()).filter((d) => d.includes('.'));
+    // 格式: domain\trank\tref_ips
+    seedsCache = text
+      .split('\n')
+      .map((l) => l.trim().toLowerCase())
+      .filter((l) => {
+        const d = l.split('\t')[0];
+        return d && d.includes('.');
+      });
     return seedsCache;
   } catch {
     return null;
@@ -49,20 +56,25 @@ export async function importSeedChunk(env: { DB: D1Database; SEEDS?: KVNamespace
     offset = 0;
   }
 
-  const chunk = all.slice(offset, offset + count).filter((d) => d && d.includes('.'));
+  const chunk = all.slice(offset, offset + count);
   if (!chunk.length) return 0;
 
   const now = Date.now();
   for (let i = 0; i < chunk.length; i += 80) {
     const part = chunk.slice(i, i + 80);
     await env.DB.batch(
-      part.map((d) =>
-        env.DB.prepare(
-          `INSERT INTO sites (domain, source, first_seen, last_seen, status)
-           VALUES (?, 'seed', ?, ?, 'pending')
-           ON CONFLICT(domain) DO NOTHING`
-        ).bind(d, now, now)
-      )
+      part.map((line) => {
+        const [domain, rankStr, refStr] = line.split('\t');
+        const rank = parseInt(rankStr || '0', 10) || null;
+        const refIps = parseInt(refStr || '0', 10) || null;
+        return env.DB.prepare(
+          `INSERT INTO sites (domain, source, first_seen, last_seen, status, majestic_rank, ref_ips)
+           VALUES (?, 'seed', ?, ?, 'pending', ?, ?)
+           ON CONFLICT(domain) DO UPDATE SET
+             majestic_rank = COALESCE(sites.majestic_rank, excluded.majestic_rank),
+             ref_ips = COALESCE(sites.ref_ips, excluded.ref_ips)`
+        ).bind(domain, now, now, rank, refIps);
+      })
     );
   }
 

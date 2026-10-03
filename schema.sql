@@ -31,6 +31,9 @@ CREATE TABLE IF NOT EXISTS sites (
   enrich_status   TEXT DEFAULT 'pending',    -- 第三方数据富化状态
   enrich_at       INTEGER,
   ad_count        INTEGER,                   -- 透明度中心里指向该域名的广告总数
+  ad_score        INTEGER,                   -- 广告活跃度评分 0-100（value.ts 计算）
+  majestic_rank   INTEGER,                   -- Majestic Million 全球排名（种子导入时）
+  ref_ips         INTEGER,                   -- 外链引用 IP 数（权重/流量代理）
   error           TEXT
 );
 

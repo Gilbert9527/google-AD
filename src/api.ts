@@ -11,6 +11,7 @@ import { runCrawlBatch } from './pipeline/crawl';
 import { runEnrichBatch, enrichSingleSite } from './pipeline/enrich';
 import { runAiBatch, analyzeSingleSite } from './pipeline/ai';
 import { importSeedChunk } from './sources/seeds';
+import { estimateRevenue } from './analyze/value';
 
 const api = new Hono<{ Bindings: Env }>();
 
@@ -50,11 +51,15 @@ api.get('/sites', async (c) => {
   const orderSql =
     sort === 'rank'
       ? 'rank IS NULL, rank ASC'
-      : sort === 'name'
-        ? 'domain ASC'
-        : sort === 'oldest'
-          ? 'first_seen ASC'
-          : 'first_seen DESC';
+      : sort === 'ad_score'
+        ? 'ad_score IS NULL, ad_score DESC, ad_count IS NULL, ad_count DESC'
+        : sort === 'refips'
+          ? 'ref_ips IS NULL, ref_ips DESC'
+          : sort === 'name'
+            ? 'domain ASC'
+            : sort === 'oldest'
+              ? 'first_seen ASC'
+              : 'first_seen DESC';
 
   const whereSql = where.join(' AND ');
   const totalRow = await db
@@ -64,7 +69,7 @@ api.get('/sites', async (c) => {
   const rows = await db
     .prepare(
       `SELECT domain, title, description, category, category_source, ai_summary, adsense,
-              ad_count, rank, lang, first_seen, last_crawled
+              ad_count, ad_score, rank, majestic_rank, ref_ips, lang, source, first_seen, last_crawled
        FROM sites
        WHERE ${whereSql}
        ORDER BY ${orderSql}
@@ -86,7 +91,11 @@ api.get('/sites', async (c) => {
       summary: r.ai_summary,
       adsense: !!r.adsense,
       adCount: r.ad_count,
+      adScore: r.ad_score,
       rank: r.rank,
+      majesticRank: r.majestic_rank,
+      refIps: r.ref_ips,
+      source: r.source,
       lang: r.lang,
       firstSeen: r.first_seen,
       lastCrawled: r.last_crawled,
@@ -143,6 +152,10 @@ api.get('/sites/:domain', async (c) => {
     adsense: !!site.adsense,
     adClient: site.ad_client,
     adCount: site.ad_count,
+    adScore: site.ad_score,
+    rank: site.rank,
+    majesticRank: site.majestic_rank,
+    refIps: site.ref_ips,
     category: site.category,
     categoryLabel: site.category ? CATEGORY_LABELS[site.category as keyof typeof CATEGORY_LABELS] || site.category : null,
     categorySource: site.category_source,
@@ -158,6 +171,11 @@ api.get('/sites/:domain', async (c) => {
       wayback,
       crux,
     },
+    revenue: estimateRevenue({
+      rank: (site.majestic_rank as number) || (site.rank as number) || null,
+      category: site.category as string | null,
+      adsense: !!site.adsense,
+    }),
     firstSeen: site.first_seen,
     lastCrawled: site.last_crawled,
     creatives: (creatives.results || []).map((r: Record<string, unknown>) => ({

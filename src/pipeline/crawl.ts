@@ -94,6 +94,20 @@ export async function runCrawlBatch(env: Env, batchSize?: number): Promise<Crawl
           .bind(finalDomain, now(), now(), res.title, res.description, h.category, res.adsense ? 1 : 0)
           .run();
       }
+      // 一跳外链衍生候选：从首页外链发现长尾站点（每个站最多带出 5 个）
+      if (res.outLinks && res.outLinks.length) {
+        const nowTs = now();
+        const linkStmts = res.outLinks.slice(0, 5).map((d) =>
+          db
+            .prepare(
+              `INSERT INTO sites (domain, source, first_seen, last_seen, status)
+               VALUES (?, 'link', ?, ?, 'pending')
+               ON CONFLICT(domain) DO NOTHING`
+            )
+            .bind(d, nowTs, nowTs)
+        );
+        await db.batch(linkStmts);
+      }
     } catch (e) {
       report.failed++;
       await db
